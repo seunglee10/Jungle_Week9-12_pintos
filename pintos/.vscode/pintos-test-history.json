@@ -333,138 +333,138 @@
   },
   "threads": {
     "tests/threads/alarm-single": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/alarm-multiple": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/alarm-simultaneous": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/alarm-priority": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/alarm-zero": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/alarm-negative": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-change": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-one": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-multiple": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-multiple2": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-nest": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-sema": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-lower": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-fifo": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-preempt": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-sema": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-condvar": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/priority-donate-chain": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-load-1": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-load-60": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-load-avg": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-recent-1": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-fair-2": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-fair-20": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-nice-2": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-nice-10": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     },
     "tests/threads/mlfqs/mlfqs-block": {
-      "count": 2,
-      "last_used": 1777309798.219,
+      "count": 6,
+      "last_used": 1777381033.864,
       "last_action": "run"
     }
   }

@@ -9,6 +9,7 @@
 #include "vm/vm.h"
 #endif
 
+struct lock;/* 락 호출*/
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -90,10 +91,16 @@ struct thread {
 	tid_t tid;                          /* Thread identifier. */
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
+	int priority;                       /* 실제 스케줄링에 쓰는 priority. donation 반영값 */
+	int base_priority;                  /* 원래 priority. thread_set_priority()가 바꾸는 값 */
+	struct list donations;              /* 나에게 priority를 빌려준 thread들의 목록 */
+	struct list_elem donation_elem;     /* 내가 다른 thread의 donations 목록에 들어갈 때 쓰는 elem */
+	struct lock *wait_on_lock;          /* 내가 지금 기다리는 lock. nested donation 추적용 */
 	int64_t wakeup_tick;                /* Tick when this thread should wake up.비지 웨이팅용 */
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	
+
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

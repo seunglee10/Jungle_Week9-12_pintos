@@ -61,7 +61,9 @@ static struct thread *next_thread_to_run (void);
 static void init_thread (struct thread *, const char *name, int priority);
 
 static bool thread_priority_ver_alram (const struct list_elem *a,
-		const struct list_elem *b, void *aux); // 알람pririty 용 함수 선언
+		const struct list_elem *b, void *aux); /* 레이리스트 프라이어티 정렬 기준 */
+static bool donation_priority_more (const struct list_elem *a,
+		const struct list_elem *b, void *aux); /* donations 목록 정렬 기준 */
 
 static void do_schedule(int status);
 static void schedule (void);
@@ -328,18 +330,31 @@ void
 thread_set_priority (int new_priority) {
 	struct thread *curr = thread_current ();
 
-	curr->priority = new_priority;
+	curr->base_priority = new_priority; /* 사용자가 바꾸는 값은 원래 priority에 저장 */
+
+	if (list_empty (&curr->donations))  /* donation을 받는 중이 아니면 */
+		curr->priority = new_priority; /* 실제 priority도 바로 변경 */
+	else {
+		list_sort (&curr->donations, donation_priority_more, NULL);
+		/* donation 목록을 priority 높은 순서로 정렬 */
+
+		struct thread *donor = list_entry (list_front (&curr->donations),
+				struct thread, donation_elem);
+		/* 가장 높은 priority를 빌려준 thread */
+
+		curr->priority = donor->priority > new_priority
+			? donor->priority   /* donation priority가 더 높으면 유지 */
+			: new_priority;     /* 새 base_priority가 더 높으면 그 값 사용 */
+	}
 
 	if (!list_empty (&ready_list)) {
 		struct thread *front = list_entry (list_front (&ready_list),
 				struct thread, elem);
+		/* ready_list에서 현재 가장 높은 priority thread */
 
 		if (front->priority > curr->priority)
-			thread_yield ();
+			thread_yield (); /* 내가 최고 priority가 아니면 CPU 양보 */
 	}
-	//thread_current ()->priority = new_priority;
-
-
 }
 
 /* Returns the current thread's priority. */
@@ -422,14 +437,26 @@ kernel_thread (thread_func *function, void *aux) {
 	thread_exit ();       /* If function() returns, kill the thread. */
 }
 
-static bool   // 비교용 함수 각각의 값 꺼내서 비교 리턴
-thread_priority_ver_alram(const struct list_elem *a,
-	const struct  list_elem *b, void *aux UNUSED)
-	{
-		const struct thread *ta = list_entry (a,struct thread, elem);
-		const struct thread *tb = list_entry (b,struct thread, elem);
-		return ta-> priority > tb->priority;
-	};
+static bool
+thread_priority_ver_alram (const struct list_elem *a,
+		const struct list_elem *b,
+		void *aux UNUSED) {
+	const struct thread *ta = list_entry (a, struct thread, elem);
+	const struct thread *tb = list_entry (b, struct thread, elem);
+
+	return ta->priority > tb->priority; /* ready_list에서 priority 높은 thread가 앞 */
+}
+
+static bool
+donation_priority_more (const struct list_elem *a,
+		const struct list_elem *b,
+		void *aux UNUSED) {
+	const struct thread *ta = list_entry (a, struct thread, donation_elem);
+	const struct thread *tb = list_entry (b, struct thread, donation_elem);
+
+	return ta->priority > tb->priority; /* donations 목록에서 priority 높은 donor가 앞 */
+}
+
 
 
 /* Does basic initialization of T as a blocked thread named
@@ -445,6 +472,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	t->base_priority = priority;/*    아래 3줄추가*/
+	list_init (&t->donations);
+	t->wait_on_lock = NULL;
 	t->magic = THREAD_MAGIC;
 }
 
@@ -453,12 +483,17 @@ init_thread (struct thread *t, const char *name, int priority) {
    empty.  (If the running thread can continue running, then it
    will be in the run queue.)  If the run queue is empty, return
    idle_thread. */
-static struct thread *
+static struct thread * /* 추가*/
 next_thread_to_run (void) {
 	if (list_empty (&ready_list))
 		return idle_thread;
-	else
+	else {
+		list_sort (&ready_list, thread_priority_ver_alram, NULL);
+		/* donation으로 ready_list 안 thread priority가 바뀌었을 수 있어 재정렬 */
+
 		return list_entry (list_pop_front (&ready_list), struct thread, elem);
+		/* 정렬 후 맨 앞, 즉 가장 높은 priority thread를 실행 */
+	}
 }
 
 /* Use iretq to launch the thread */
