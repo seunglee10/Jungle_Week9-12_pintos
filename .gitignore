@@ -28,3 +28,5 @@ core
 
 # macOS
 .DS_Store
+gdb-*.tar*
+gdb-[0-9]*/
