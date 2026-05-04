@@ -41,6 +41,24 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
-	printf ("system call!\n");
-	thread_exit ();
+	switch (f->R.rax){
+		case SYS_WRITE:
+			if ((f->R.rdi == STDOUT_FILENO)){
+				putbuf((char *)f->R.rsi, (size_t)f->R.rdx);
+				f->R.rax = f->R.rdx;
+			}else{
+				f->R.rax = -1;
+			}
+			break;
+
+		case SYS_EXIT:
+			thread_current()->exit_status = (int)f->R.rdi;
+			thread_exit();
+			break;
+
+		default:
+			printf ("system call!\n");
+			thread_exit ();
+			break;
+	} 
 }
