@@ -22,10 +22,15 @@
 #include "vm/vm.h"
 #endif
 
+#include "threads/synch.h"
+
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+
+static struct semaphore initd_sema;
+static int initd_exit_status;
 
 /* General process initializer for initd and other process. */
 static void
@@ -41,19 +46,37 @@ process_init (void) {
 tid_t
 process_create_initd (const char *file_name) {
 	char *fn_copy;
+	char *name_copy;
 	tid_t tid;
+
+	sema_init (&initd_sema, 0);
 
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
-	fn_copy = palloc_get_page (0);
-	if (fn_copy == NULL)
+	fn_copy = palloc_get_page(0);
+	if (fn_copy == NULL){
 		return TID_ERROR;
-	strlcpy (fn_copy, file_name, PGSIZE);
+	}
+	strlcpy(fn_copy, file_name, PGSIZE);
+
+	name_copy = palloc_get_page(0);
+	if (name_copy == NULL){
+		palloc_free_page(fn_copy);
+		return TID_ERROR;
+	}
+	strlcpy(name_copy, file_name, PGSIZE);
+
+	char *save_ptr;
+	char *filename_only = strtok_r(name_copy, " ", &save_ptr);
 
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create(filename_only, PRI_DEFAULT, initd, fn_copy);
+	
+	palloc_free_page(name_copy);
+
 	if (tid == TID_ERROR)
-		palloc_free_page (fn_copy);
+		palloc_free_page(fn_copy);
+
 	return tid;
 }
 
@@ -204,17 +227,24 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	return -1;
+	sema_down(&initd_sema);
+	
+	return initd_exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
-	struct thread *curr = thread_current ();
+	struct thread *curr = thread_current();
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	if (curr->pml4 != NULL){
+		initd_exit_status = curr->exit_status;
+		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
+		sema_up(&initd_sema);
+	}
 
 	process_cleanup ();
 }
@@ -310,7 +340,10 @@ struct ELF64_PHDR {
 #define ELF ELF64_hdr
 #define Phdr ELF64_PHDR
 
+#define MAX_ARGS 64
+
 static bool setup_stack (struct intr_frame *if_);
+static bool setup_args (struct intr_frame *if_, char *cmdline);
 static bool validate_segment (const struct Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes,
@@ -329,6 +362,16 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	char *cp4_cmdline = NULL;
+	char *cp4_filename = NULL;
+	cp4_cmdline = palloc_get_page(0);
+	cp4_filename = palloc_get_page(0);
+	strlcpy(cp4_cmdline, file_name, PGSIZE);
+	strlcpy(cp4_filename, file_name, PGSIZE);
+
+	char *save_ptr;
+	char *filename_only = strtok_r(cp4_filename, " ", &save_ptr);
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -336,9 +379,9 @@ load (const char *file_name, struct intr_frame *if_) {
 	process_activate (thread_current ());
 
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open (filename_only);
 	if (file == NULL) {
-		printf ("load: %s: open failed\n", file_name);
+		printf ("load: %s: open failed\n", filename_only);
 		goto done;
 	}
 
@@ -417,11 +460,17 @@ load (const char *file_name, struct intr_frame *if_) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
+	if (!setup_args(if_, cp4_cmdline)){
+		goto done;
+	}
+
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
 	file_close (file);
+	palloc_free_page(cp4_cmdline);
+	palloc_free_page(cp4_filename);
 	return success;
 }
 
@@ -551,6 +600,50 @@ setup_stack (struct intr_frame *if_) {
 	return success;
 }
 
+static bool
+setup_args(struct intr_frame *if_, char *cmdline){
+	char *argv[MAX_ARGS];
+	char *arg_addr[MAX_ARGS];
+	int argc = 0;
+
+	char *token;
+	char *save_ptr;
+
+	for (token = strtok_r(cmdline, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr)){
+		argv[argc++] = token;
+	}
+	for (int i = argc - 1; i >= 0; i--){
+		size_t len = strlen(argv[i]) + 1;
+		if_->rsp -= len;
+		memcpy((void *)if_->rsp, argv[i], len);
+		arg_addr[i] = (char *)if_->rsp;
+	}
+
+	const size_t word_size = sizeof(char *);
+	while (if_->rsp % word_size != 0){
+		if_->rsp--;
+		*(uint8_t *)if_->rsp = 0;
+	}
+
+	if_->rsp -= word_size;
+	*(char **)if_->rsp = NULL;
+
+	for (int i = argc - 1; i >= 0; i--){
+		if_->rsp -= word_size;
+		*(char **)if_->rsp = arg_addr[i];
+	}
+
+	char **argv_entry = (char **)if_->rsp;
+
+	if_->rsp -= word_size;
+	*(char **)if_->rsp = NULL;
+
+	if_->R.rdi = (uint64_t)argc;
+	if_->R.rsi = (uint64_t)argv_entry;
+
+	return true;
+}
+ 
 /* Adds a mapping from user virtual address UPAGE to kernel
  * virtual address KPAGE to the page table.
  * If WRITABLE is true, the user process may modify the page;
