@@ -18,11 +18,13 @@
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
 
 #include "threads/synch.h"
+#include "threads/malloc.h"
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
@@ -557,13 +559,31 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	}
 
+	t->fd_table_size = 64;
+	t->fd_next = 2;
+	t->fd_table = malloc (sizeof (struct file *) * t->fd_table_size);
+	if (t->fd_table == NULL)
+		goto done;
+	for (int i = 0; i < t->fd_table_size; i++)
+		t->fd_table[i] = NULL;
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
-	palloc_free_page(cp4_cmdline);
-	palloc_free_page(cp4_filename);
+	if (!success && t->fd_table != NULL) {
+		free (t->fd_table);
+		t->fd_table = NULL;
+		t->fd_table_size = 0;
+		t->fd_next = 2;
+	}
+
+	if (file != NULL)
+		file_close (file);
+
+	if (cp4_cmdline != NULL)
+		palloc_free_page (cp4_cmdline);
+	if (cp4_filename != NULL)
+		palloc_free_page (cp4_filename);
 	return success;
 }
 

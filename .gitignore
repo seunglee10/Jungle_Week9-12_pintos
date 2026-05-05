@@ -30,3 +30,7 @@ core
 .DS_Store
 gdb-*.tar*
 gdb-[0-9]*/
+
+# Annotation (auto-generated)
+.jungle-kit/
+.gitattributes

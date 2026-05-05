@@ -5,11 +5,13 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
 
 struct lock;/* 락 호출*/
+struct file;
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -97,15 +99,19 @@ struct thread {
 	struct list_elem donation_elem;     /* 내가 다른 thread의 donations 목록에 들어갈 때 쓰는 elem */
 	struct lock *wait_on_lock;          /* 내가 지금 기다리는 lock. nested donation 추적용 */
 	int64_t wakeup_tick;                /* Tick when this thread should wake up.비지 웨이팅용 */
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
-	
-
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
 	int exit_status;
+	struct file **fd_table;	/* fd → file* 매핑 테이블(파일 디스크립터) */
+	int fd_table_size;	/* fd_table 배열 크기 */
+	int fd_next;	/* 다음에 할당할 fd 후보 */
+	struct list children;	/* 내가 fork로 만든 자식 process 목록 */
+	struct child_info *child_info;	/* 부모가 나를 wait할 때 보는 내 종료 정보 */
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
@@ -116,6 +122,17 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 };
+
+#ifdef USERPROG
+struct child_info {
+	tid_t pid;			/* child process id */
+	int exit_status;		/* child가 exit할 때 남기는 종료 코드 */
+	bool exited;			/* child가 이미 종료됐는지 표시 */
+	bool waited;			/* 부모가 이미 wait했는지 표시 */
+	struct semaphore wait_sema;	/* 부모가 child 종료까지 잠들 때 쓰는 세마포어 */
+	struct list_elem elem;	/* 부모의 children 리스트에 들어가기 위한 elem */
+};
+#endif
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
