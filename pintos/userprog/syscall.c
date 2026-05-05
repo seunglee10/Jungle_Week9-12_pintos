@@ -7,6 +7,9 @@
 #include "userprog/gdt.h"
 #include "threads/flags.h"
 #include "intrinsic.h"
+#include "threads/malloc.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -36,12 +39,112 @@ syscall_init (void) {
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
+/* fd_table 확장 */
+static bool
+fd_table_expand (struct thread *t) {
+	int old_size = t->fd_table_size;
+	int new_size = old_size * 2;
+	struct file **new_table = malloc (sizeof (struct file *) * new_size);
+
+	if (new_table == NULL)
+		return false;
+
+	/* 기존 테이블 값 새 테이블로 복사 */
+	for (int i = 0; i < old_size; i++)
+		new_table[i] = t->fd_table[i];
+
+	/* 새로 확장한 칸 NULL로 만듦 */
+	for (int i = old_size; i < new_size; i++)
+		new_table[i] = NULL;
+
+	/* 기존 fd table 배열 반납 */
+	free (t->fd_table);
+	t->fd_table = new_table;
+	t->fd_table_size = new_size;
+	return true;
+}
+/* fd_next부터 빈 슬롯을 찾아 파일을 등록하고, 배정된 fd 반환.
+   빈 슬롯이 없으면 fd_table을 확장한 뒤 다시 찾음  */
+static int
+fd_allocate (struct file *f) {
+	struct thread *t = thread_current ();
+
+	/* 열린 파일이 없거나, fd_table 없으면 실패 */
+	if (f == NULL || t->fd_table == NULL)
+		return -1;
+
+	/* fd_next부터 빈 칸 찾기 */
+	for (int i = t->fd_next; i < t->fd_table_size; i++) {
+		if (t->fd_table[i] == NULL) {
+			t->fd_table[i] = f;
+			t->fd_next = i + 1;
+			return i;
+		}
+	}
+
+	if (!fd_table_expand (t))
+		return -1;
+
+	/* fd_table 확장 후 fd_next부터 돌면서 빈 fd 찾기 */
+	for (int i = t->fd_next; i < t->fd_table_size; i++) {
+		if (t->fd_table[i] == NULL) {
+			t->fd_table[i] = f;
+			t->fd_next = i + 1;
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+/* fd 번호로 실제 struct file * 찾기 */
+static struct file *
+fd_table_get_file (int fd) {
+	struct thread *t = thread_current ();
+
+	if (fd < 2 || t->fd_table == NULL || fd >= t->fd_table_size)
+		return NULL;
+
+	return t->fd_table[fd];
+}
+
+/* fd를 닫기 */
+static void
+fd_close (int fd) {
+	struct thread *t = thread_current ();
+
+	if (fd < 2 || t->fd_table == NULL || fd >= t->fd_table_size)
+		return;
+
+	if (t->fd_table[fd] == NULL)
+		return;
+
+	file_close (t->fd_table[fd]);
+	t->fd_table[fd] = NULL;
+
+	/* fd_next보다 더 작은 fd가 비었으면 다음 open 때 그 번호를 재사용 */
+	if (fd < t->fd_next)
+		t->fd_next = fd;
+}
 
 /* The main system call interface */
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
 	switch (f->R.rax){
+		case SYS_OPEN: {
+			const char *name = (const char *) f->R.rdi;
+			struct file *opened = filesys_open (name);
+			f->R.rax = fd_allocate (opened);
+			if (f->R.rax == -1 && opened != NULL)
+				file_close (opened);
+			break;
+		}
+
+		case SYS_CLOSE:
+			fd_close ((int) f->R.rdi);
+			break;
+
 		case SYS_WRITE:
 			if ((f->R.rdi == STDOUT_FILENO)){
 				putbuf((char *)f->R.rsi, (size_t)f->R.rdx);

@@ -480,6 +480,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 #ifdef USERPROG
 	t->pml4 = NULL;
 	t->exit_status = -1;
+	t->fd_table = NULL;
+	t->fd_table_size = 0;
+	t->fd_next = 2;
 #endif
 }
 
