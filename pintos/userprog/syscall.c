@@ -6,6 +6,7 @@
 #include "threads/loader.h"
 #include "userprog/gdt.h"
 #include "threads/flags.h"
+#include "userprog/process.h"
 #include "intrinsic.h"
 
 void syscall_entry (void);
@@ -49,6 +50,14 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			}else{
 				f->R.rax = -1;
 			}
+			break;
+
+		case SYS_FORK:
+			f->R.rax = process_fork ((const char *) f->R.rdi, f);
+			break;
+
+		case SYS_WAIT:
+			f->R.rax = process_wait ((tid_t) f->R.rdi);
 			break;
 
 		case SYS_EXIT:

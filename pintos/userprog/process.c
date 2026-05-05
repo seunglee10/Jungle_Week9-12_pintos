@@ -31,7 +31,14 @@ static void __do_fork (void *);
 
 static struct semaphore initd_sema;
 static int initd_exit_status;
-
+/* fork()는 자식 thread를 만들 때 부모의 정보도 같이 넘겨야 한다.
+   부모 thread와 부모 intr_frame을 구조체 하나로 묶어서 넘긴다. */
+struct fork_args {
+	struct thread *parent;        /* fork를 호출한 부모 thread */
+	struct intr_frame parent_if;  /* fork 순간 부모의 레지스터 상태 */
+	struct semaphore fork_sema;   /* 자식 복사가 끝날 때까지 부모를 재우는 신호 */
+	bool success;                 /* 자식 복사가 성공했는지 부모에게 알려주는 값 */
+};
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -97,10 +104,46 @@ initd (void *f_name) {
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
-process_fork (const char *name, struct intr_frame *if_ UNUSED) {
-	/* Clone current thread to new thread.*/
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+process_fork (const char *name, struct intr_frame *if_) {
+	/* 자식에게 넘길 fork 준비물 상자를 만든다.
+	   여기에는 부모 thread, 부모 intr_frame, 동기화용 semaphore가 들어간다. */
+	struct fork_args *args = palloc_get_page (PAL_ZERO);
+
+	if (args == NULL)
+		return TID_ERROR; /* 준비물 상자를 못 만들면 fork 실패 */
+
+	/* 현재 실행 중인 thread가 fork를 호출한 부모다. */
+	args->parent = thread_current ();
+
+	/* fork syscall 순간의 부모 레지스터 상태를 복사한다.
+	   자식은 이 값을 기반으로 fork() 이후 지점부터 실행된다. */
+	memcpy (&args->parent_if, if_, sizeof args->parent_if);
+
+	/* 부모는 자식이 복사 성공/실패를 알려줄 때까지 기다려야 한다.
+	   초기값 0이면 부모가 sema_down()을 호출했을 때 잠든다. */
+	sema_init (&args->fork_sema, 0);
+	args->success = false;
+
+	/* 자식 thread를 만든다.
+	   aux로 args를 넘겨 자식이 부모 정보와 semaphore에 접근하게 한다. */
+	tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, args);
+
+	if (tid == TID_ERROR) {
+		palloc_free_page (args); /* 자식 생성 실패 시 준비물 상자 회수 */
+		return TID_ERROR;
+	}
+
+	/* 깃북 요구사항:
+	   부모는 자식이 복제에 성공했는지 실패했는지 알기 전까지 fork에서 반환하면 안 된다. */
+	sema_down (&args->fork_sema);
+
+	/* 자식이 기록한 성공 여부를 확인한다.
+	   args는 아래에서 해제할 것이므로 success 값을 지역 변수로 빼둔다. */
+	bool success = args->success;
+
+	palloc_free_page (args); /* 부모가 fork 결과를 확인했으므로 준비물 상자 회수 */
+
+	return success ? tid : TID_ERROR;
 }
 
 #ifndef VM
@@ -115,21 +158,50 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
-
+	/* 커널 주소공간은 모든 프로세스가 공유하므로 자식에게 따로 복사하지 않는다. */
+	if (is_kernel_vaddr (va))
+	{
+		return true;
+	}
 	/* 2. Resolve VA from the parent's page map level 4. */
+	/* 2. 부모 pml4에서 va가 실제로 연결된 페이지를 찾는다.
+   va는 유저 프로그램이 보는 가상주소이고,
+   parent_page는 커널이 실제 내용을 복사할 수 있는 페이지 주소다. */
 	parent_page = pml4_get_page (parent->pml4, va);
-
+	if (parent_page == NULL)
+	{
+		return false; /* 부모 페이지를 못 찾으면 자식에게 복사할 수 없으므로 fork 실패 */
+	}
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
-	 *    TODO: NEWPAGE. */
+	    TODO: NEWPAGE. */
+	/* 3. 자식이 사용할 새 유저 페이지를 할당한다.
+   부모 페이지를 그대로 공유하면 부모/자식 메모리가 서로 영향을 주므로,
+   자식 전용 페이지를 새로 만들고 나중에 부모 내용을 복사해야 한다. */
+	newpage = palloc_get_page (PAL_USER);
 
+	if (newpage == NULL)
+	{
+		return false; /* 새 페이지를 못 만들면 주소공간 복사를 계속할 수 없으므로 fork 실패 */
+	}
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
+	/* 4. 부모 페이지 내용을 자식 새 페이지에 그대로 복사한다.
+    parent_page와 newpage는 둘 다 실제 페이지 내용에 접근 가능한 주소다. */
+	memcpy (newpage, parent_page, PGSIZE);
 
-	/* 5. Add new page to child's page table at address VA with WRITABLE
-	 *    permission. */
+	/* 부모 페이지의 쓰기 가능 여부를 확인한다.
+	자식 페이지도 부모와 같은 권한을 가져야 하므로 이 값을 pml4_set_page()에 넘긴다. */
+	writable = is_writable (pte);
+
+	/* 5. 자식 pml4에 새 페이지를 연결한다.
+	부모가 쓰던 가상주소 va를 자식도 똑같이 쓰게 하되,
+	실제 연결되는 페이지는 자식 전용 newpage다. */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
-		/* 6. TODO: if fail to insert page, do error handling. */
+	/* 6. 연결에 실패하면 방금 할당한 newpage를 회수한다.
+	   회수하지 않으면 아무도 참조하지 않는 페이지가 남아서 메모리 누수가 된다. */
+		palloc_free_page (newpage);
+		return false;
 	}
 	return true;
 }
@@ -142,15 +214,28 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 static void
 __do_fork (void *aux) {
 	struct intr_frame if_;
-	struct thread *parent = (struct thread *) aux;
+
+	/* process_fork()에서 넘긴 aux를 fork_args 타입으로 다시 해석한다.
+	   aux 안에는 부모 thread와 부모 intr_frame이 들어 있다. */
+	struct fork_args *args = aux;
+
+	/* 부모 thread.
+	   뒤에서 duplicate_pte()가 parent->pml4를 보고 부모 주소공간을 복사한다. */
+	struct thread *parent = args->parent;
+
+	/* 현재 thread는 방금 생성된 자식 thread다. */
 	struct thread *current = thread_current ();
-	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
-	struct intr_frame *parent_if;
+
 	bool succ = true;
 
-	/* 1. Read the cpu context to local stack. */
-	memcpy (&if_, parent_if, sizeof (struct intr_frame));
-
+	/* 1. Read the cpu context to local stack.
+	   부모가 fork syscall을 호출한 순간의 레지스터 상태를 자식의 intr_frame에 복사한다.
+	   이 복사가 있어야 자식도 fork() 다음 줄부터 실행되는 것처럼 동작한다. */
+	memcpy (&if_, &args->parent_if, sizeof (struct intr_frame));
+	/* fork()는 부모와 자식에게 서로 다른 반환값을 준다.
+	부모는 process_fork()의 반환값으로 자식 tid를 받고,
+	자식은 여기서 rax를 0으로 바꿔 fork()가 0을 반환한 것처럼 만든다. */
+	if_.R.rax = 0;
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
 	if (current->pml4 == NULL)
@@ -171,13 +256,21 @@ __do_fork (void *aux) {
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
-
 	process_init ();
 
-	/* Finally, switch to the newly created process. */
-	if (succ)
+	/* 여기까지 왔다는 것은 자식 pml4 복사까지 성공했다는 뜻이다.
+	부모가 sema_down()에서 기다리고 있으므로 성공 여부를 기록하고 깨운다. */
+	if (succ) {
+		args->success = true;
+		sema_up (&args->fork_sema);
 		do_iret (&if_);
+	}
+
 error:
+	/* 중간에 pml4_create()나 pml4_for_each()가 실패하면 여기로 온다.
+	   실패도 부모에게 알려야 부모가 영원히 잠들지 않는다. */
+	args->success = false;
+	sema_up (&args->fork_sema);
 	thread_exit ();
 }
 
