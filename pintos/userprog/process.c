@@ -257,7 +257,51 @@ __do_fork (void *aux) {
 	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.*/
+	 * TODO:       the resources of parent.
+	 * 해당 투두 아래에 작성함 */
+	/* fork()는 부모 프로세스의 열린 파일 목록도 자식에게 복사해야 한다.
+	   부모와 자식이 같은 fd 번호를 쓸 수 있어야 fork-close 같은 테스트가 성립한다. */
+	current->fd_table_size = parent->fd_table_size;
+	current->fd_next = parent->fd_next;
+	current->fd_table = NULL;
+
+	/* 부모가 fd_table을 가지고 있으면, 자식도 같은 크기의 fd_table을 새로 만든다.
+	   배열 자체는 새로 만들고, 각 파일 객체는 file_duplicate()로 복제한다. */
+	if (parent->fd_table != NULL && parent->fd_table_size > 0) {
+		current->fd_table = malloc (sizeof (struct file *) * current->fd_table_size);
+		if (current->fd_table == NULL)
+			goto error;
+
+		/* 먼저 전부 NULL로 초기화한다.
+		   중간에 실패했을 때 어디까지 닫아야 하는지 안전하게 만들기 위함이다. */
+		for (int i = 0; i < current->fd_table_size; i++)
+			current->fd_table[i] = NULL;
+
+		/* fd 0, 1은 stdin/stdout 예약 번호라서 현재 구조에서는 파일 객체 복사 대상이 아니다.
+		   실제 파일은 fd 2번부터 들어간다. */
+		for (int i = 2; i < parent->fd_table_size; i++) {
+			if (parent->fd_table[i] == NULL)
+				continue;
+
+			/* 부모 fd가 가리키던 파일을 자식 fd에도 복제해서 연결한다. */
+			current->fd_table[i] = file_duplicate (parent->fd_table[i]);
+
+			/* 복제 중 하나라도 실패하면 이미 복제한 파일들을 닫고 fork 실패로 처리한다. */
+			if (current->fd_table[i] == NULL) {
+				for (int j = 2; j < i; j++) {
+					if (current->fd_table[j] != NULL)
+						file_close (current->fd_table[j]);
+				}
+
+				free (current->fd_table);
+				current->fd_table = NULL;
+				current->fd_table_size = 0;
+				current->fd_next = 2;
+				goto error;
+			}
+		}
+	}
+
 	process_init ();
 
 	/* 여기까지 왔다는 것은 자식 pml4 복사까지 성공했다는 뜻이다.
@@ -334,7 +378,7 @@ process_exit (void) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
+	 * TODO: We recommend you to implement process resource cleanup here.  */
 	if (curr->pml4 != NULL){
 		initd_exit_status = curr->exit_status;
 		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
