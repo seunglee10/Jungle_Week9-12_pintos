@@ -34,6 +34,7 @@ static struct child_info *find_child (tid_t child_tid);
 
 static struct semaphore initd_sema;
 static int initd_exit_status;
+static tid_t initd_tid = TID_ERROR; /* Pintos 전체 종료 기준이 되는 최초 유저 프로세스 tid */
 /* fork()는 자식 thread를 만들 때 부모의 정보도 같이 넘겨야 한다.
    부모 thread와 부모 intr_frame을 구조체 하나로 묶어서 넘긴다. */
 struct fork_args {
@@ -41,6 +42,7 @@ struct fork_args {
 	struct intr_frame parent_if;  /* fork 순간 부모의 레지스터 상태 */
 	struct semaphore fork_sema;   /* 자식 복사가 끝날 때까지 부모를 재우는 신호 */
 	bool success;                 /* 자식 복사가 성공했는지 부모에게 알려주는 값 */
+	struct child_info *child_info;/* 부모 wait와 자식 exit가 공유할 자식 상태 */
 };
 /* General process initializer for initd and other process. */
 static void
@@ -86,6 +88,8 @@ process_create_initd (const char *file_name) {
 
 	if (tid == TID_ERROR)
 		palloc_free_page(fn_copy);
+	else
+		initd_tid = tid; /* kernel main이 기다려야 하는 최초 유저 프로세스 tid를 저장 */
 
 	return tid;
 }
@@ -117,6 +121,21 @@ process_fork (const char *name, struct intr_frame *if_) {
 
 	/* 현재 실행 중인 thread가 fork를 호출한 부모다. */
 	args->parent = thread_current ();
+	struct thread *parent = args->parent;
+
+	/* wait()가 찾을 수 있도록 부모와 자식이 공유할 child_info를 만든다. */
+	struct child_info *child = malloc (sizeof *child);
+	if (child == NULL) {
+		palloc_free_page (args);
+		return TID_ERROR;
+	}
+
+	child->pid = TID_ERROR;      /* thread_create() 성공 후 실제 tid로 채운다. */
+	child->exit_status = -1;     /* 자식이 비정상 종료하거나 아직 상태가 없을 때 기본값 */
+	child->exited = false;       /* 아직 자식은 종료되지 않았다. */
+	child->waited = false;       /* 부모가 아직 이 자식을 wait하지 않았다. */
+	sema_init (&child->wait_sema, 0); /* 부모가 wait에서 잠들 때 사용할 세마포어 */
+	args->child_info = child;    /* 자식 __do_fork()에게도 같은 child_info를 넘긴다. */
 
 	/* fork syscall 순간의 부모 레지스터 상태를 복사한다.
 	   자식은 이 값을 기반으로 fork() 이후 지점부터 실행된다. */
@@ -133,6 +152,7 @@ process_fork (const char *name, struct intr_frame *if_) {
 
 	if (tid == TID_ERROR) {
 		palloc_free_page (args); /* 자식 생성 실패 시 준비물 상자 회수 */
+		free (child);            /* wait용 child_info도 더 이상 쓸 일이 없으므로 회수 */
 		return TID_ERROR;
 	}
 
@@ -143,6 +163,15 @@ process_fork (const char *name, struct intr_frame *if_) {
 	/* 자식이 기록한 성공 여부를 확인한다.
 	   args는 아래에서 해제할 것이므로 success 값을 지역 변수로 빼둔다. */
 	bool success = args->success;
+
+	if (success) {
+		/* wait(pid)가 찾을 수 있게 부모의 children 목록에 등록한다. */
+		child->pid = tid;
+		list_push_back (&parent->children, &child->elem);
+	} else {
+		/* 자식 복제 실패 시 부모 children에 올리지 않고 정보 객체를 정리한다. */
+		free (child);
+	}
 
 	palloc_free_page (args); /* 부모가 fork 결과를 확인했으므로 준비물 상자 회수 */
 
@@ -308,6 +337,10 @@ __do_fork (void *aux) {
 	/* 여기까지 왔다는 것은 자식 pml4 복사까지 성공했다는 뜻이다.
 	부모가 sema_down()에서 기다리고 있으므로 성공 여부를 기록하고 깨운다. */
 	if (succ) {
+		/* 자식 종료 시 process_exit()가 부모의 child_info에 상태를 남길 수 있게 연결한다.
+		   이 포인터는 부모의 children 리스트에 들어간 객체와 같은 객체다. */
+		current->child_info = args->child_info;
+
 		args->success = true;
 		sema_up (&args->fork_sema);
 		do_iret (&if_);
@@ -427,19 +460,21 @@ static struct child_info *find_child (tid_t child_tid){
 void
 process_exit (void) {
 	struct thread *curr = thread_current();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here.  */
-	if (curr->pml4 != NULL){
-		initd_exit_status = curr->exit_status;
+
+	/* 유저 프로세스 종료 메시지 출력 */
+	if (curr->pml4 != NULL) {
 		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
+	}
+
+	/* initd_sema는 Pintos kernel main이 최초 유저 프로그램 종료를 기다릴 때만 쓴다. */
+	if (curr->tid == initd_tid) {
+		initd_exit_status = curr->exit_status;
 		sema_up(&initd_sema);
 	}
 
 	/* 종료 중인 자식이면 부모가 wait()에서 읽을 종료 정보를 남긴다. */
 	if (curr->child_info != NULL) {
-		/* thread status에 존재하는 상태를 exit_status를 info에 복사 */
+		/* 현재 thread의 종료 상태를 부모가 읽을 child_info에 복사 */
 		curr->child_info->exit_status = curr->exit_status;
 		/* 종료 여부를 true로 변경 */
 		curr->child_info->exited = true;
