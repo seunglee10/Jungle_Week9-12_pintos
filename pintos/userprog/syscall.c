@@ -17,6 +17,7 @@
 #include "devices/input.h"
 
 static void is_crazy_user_buffer(const void *buffer, size_t size);
+static void is_crazy_user_string(const char *str);
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -144,12 +145,25 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	switch (f->R.rax){
 		case SYS_OPEN: {
 			const char *name = (const char *) arg0;
+			is_crazy_user_string(name);
+
 			struct file *opened = filesys_open (name);
 			f->R.rax = fd_allocate (opened);
 			if (f->R.rax == -1 && opened != NULL)
 				file_close (opened);
 			break;
 		}
+
+		case SYS_CREATE:{
+			const char *name = (const char *)arg0;
+			const unsigned initial_size = (unsigned)arg1;
+
+			is_crazy_user_string(name);
+
+			f->R.rax = filesys_create (name, initial_size);
+			break;
+		}
+
 		case SYS_READ: {
 			int fd = (int) arg0;
 			void *buffer = (void *) arg1;
@@ -161,14 +175,14 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			}
 
 			/* fd == 0 일 때 (stdin) 키보드 입력 읽기 */
-			if (fd == STDIN_FILENO) {
+			if (fd == 0) {
 				is_crazy_user_buffer(buffer, size);
 				uint8_t *buf = (uint8_t *) buffer;
 				for (unsigned i = 0; i < size; i++)
 					buf[i] = input_getc();
 				f->R.rax = size;
 			/* fd ==1 일 때 (stdout) 지금 읽기니까 이땐 무조건 -1 반환 */
-			} else if (fd == STDOUT_FILENO) {
+			} else if (fd == 1) {
 				f->R.rax = -1;
 			/* fd >=2 일 때 open()으로 연 일반 파일이라고 보고 처리 */
 			} else if (fd >= 2) {
@@ -186,37 +200,49 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		}
 
-		case SYS_WRITE:
-			int fd = (int) arg0;
-			void *buffer = (void *) arg1;
-			unsigned size = (unsigned) arg2;
+		case SYS_FILESIZE:{
+			const int fd = (int)arg0;
+			struct file *file = fd_table_get_file(fd);
 
-			if (size == 0) {
+			if (file == NULL){
+				f->R.rax = -1;
+			} else {
+				f->R.rax = file_length(file);
+			}
+			break;
+		}
+
+		case SYS_CLOSE:
+			fd_close ((int) arg0);
+			break;
+
+		case SYS_WRITE:{
+			const int fd = (int)arg0;
+			const void *buffer = (const void *)arg1;
+			const size_t size = (size_t)arg2;
+
+			if (size == 0){
 				f->R.rax = 0;
 				break;
 			}
-			if (fd == STDOUT_FILENO) {
-				is_crazy_user_buffer(buffer, size);
-				putbuf((char *) buffer, size);
+
+			is_crazy_user_buffer(buffer, size);
+
+			if (fd == STDOUT_FILENO){
+				putbuf(buffer, size);
 				f->R.rax = size;
-			} else if (fd == STDIN_FILENO) {
-				f->R.rax = -1;
-			} else if (fd >=2) {
-				struct file *write_file = fd_table_get_file(fd);
-				if (write_file == NULL) {
+			} else if (fd >= 2) {
+				struct file *write_file = fd_table_get_file (fd);
+				if (write_file == NULL){
 					f->R.rax = -1;
 				} else {
-					is_crazy_user_buffer(buffer, size);
 					f->R.rax = file_write(write_file, buffer, size);
 				}
 			} else {
 				f->R.rax = -1;
 			}
 			break;
-			
-		case SYS_CLOSE:
-			fd_close ((int) arg0);
-			break;
+		}
 
 		case SYS_FORK:
 			f->R.rax = process_fork ((const char *) arg0, f);
@@ -227,14 +253,15 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 
 		case SYS_EXEC:
-			/* exec 실패 시 현재 프로세스를 exit(-1)로 종료한다. */
-			if (process_exec ((void *) arg0) < 0){
-				curtain_call(-1);
-			}
+			is_crazy_user_string ((const char *) arg0);
+			if (process_exec ((void *) arg0) < 0)
+				curtain_call (-1);
 			break;
 
 		case SYS_EXIT:
 			curtain_call ((int) arg0);
+			// thread_current()->exit_status = (int)f->R.rdi;
+			// thread_exit();
 			break;
 
 		default:
@@ -255,8 +282,7 @@ static void
 is_crazy_user_address (const void *u_addr) {
 	if (u_addr == NULL || !is_user_vaddr (u_addr) ||
 		pml4_get_page (thread_current ()->pml4, u_addr) == NULL) {
-		thread_current ()->exit_status = -1;
-		thread_exit ();
+		curtain_call (-1);
 	}
 }
 
@@ -270,3 +296,12 @@ is_crazy_user_buffer (const void *buffer, size_t size) {
 		is_crazy_user_address (start + i);
 }
 
+static void
+is_crazy_user_string (const char *str){
+	is_crazy_user_address(str);
+
+	while(*str != '\0'){
+		str++;
+		is_crazy_user_address(str);
+	}
+}
