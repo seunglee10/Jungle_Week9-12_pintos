@@ -700,7 +700,7 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	}
 
-	t->fd_table_size = 64;
+	t->fd_table_size = 128;
 	t->fd_next = 2;
 	t->fd_table = malloc (sizeof (struct file *) * t->fd_table_size);
 	if (t->fd_table == NULL)

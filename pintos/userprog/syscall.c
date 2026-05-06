@@ -150,7 +150,6 @@ syscall_handler (struct intr_frame *f UNUSED) {
 				file_close (opened);
 			break;
 		}
-		
 		case SYS_READ: {
 			int fd = (int) arg0;
 			void *buffer = (void *) arg1;
@@ -162,14 +161,14 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			}
 
 			/* fd == 0 일 때 (stdin) 키보드 입력 읽기 */
-			if (fd == 0) {
+			if (fd == STDIN_FILENO) {
 				is_crazy_user_buffer(buffer, size);
 				uint8_t *buf = (uint8_t *) buffer;
 				for (unsigned i = 0; i < size; i++)
 					buf[i] = input_getc();
 				f->R.rax = size;
 			/* fd ==1 일 때 (stdout) 지금 읽기니까 이땐 무조건 -1 반환 */
-			} else if (fd == 1) {
+			} else if (fd == STDOUT_FILENO) {
 				f->R.rax = -1;
 			/* fd >=2 일 때 open()으로 연 일반 파일이라고 보고 처리 */
 			} else if (fd >= 2) {
@@ -187,18 +186,36 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		}
 
-		case SYS_CLOSE:
-			fd_close ((int) arg0);
-			break;
-
 		case SYS_WRITE:
-			if ((arg0 == STDOUT_FILENO)){
-				is_crazy_user_buffer((const void *) arg1, (size_t) arg2);
-				putbuf((char *) arg1, (size_t) arg2);
-				f->R.rax = arg2;
-			}else{
+			int fd = (int) arg0;
+			void *buffer = (void *) arg1;
+			unsigned size = (unsigned) arg2;
+
+			if (size == 0) {
+				f->R.rax = 0;
+				break;
+			}
+			if (fd == STDOUT_FILENO) {
+				is_crazy_user_buffer(buffer, size);
+				putbuf((char *) buffer, size);
+				f->R.rax = size;
+			} else if (fd == STDIN_FILENO) {
+				f->R.rax = -1;
+			} else if (fd >=2) {
+				struct file *write_file = fd_table_get_file(fd);
+				if (write_file == NULL) {
+					f->R.rax = -1;
+				} else {
+					is_crazy_user_buffer(buffer, size);
+					f->R.rax = file_write(write_file, buffer, size);
+				}
+			} else {
 				f->R.rax = -1;
 			}
+			break;
+			
+		case SYS_CLOSE:
+			fd_close ((int) arg0);
 			break;
 
 		case SYS_FORK:
