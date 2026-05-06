@@ -30,6 +30,7 @@ static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+static struct child_info *find_child (tid_t child_tid);
 
 static struct semaphore initd_sema;
 static int initd_exit_status;
@@ -362,15 +363,66 @@ process_exec (void *f_name) {
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) {
+process_wait (tid_t child_tid) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	sema_down(&initd_sema);
+
+	/* 현재 process_wait를 호출한 주체가 kernel main thread라면
+	   pml4가 없는 커널 thread라면
+	   기존 initd_sema 방식으로 최초 유저 프로그램을 기다린다. */
+	if (thread_current()->pml4 == NULL) {
+		sema_down(&initd_sema);
+		return initd_exit_status;
+	}
+
+	/* 자식 여부 확인 */
+	struct child_info *child = find_child (child_tid);
+	/* pid에 해당하는 직접 자식이 아니면 wait 실패로 -1 반환 */
+	if (child == NULL) {
+		return -1;
+	 }
 	
-	return initd_exit_status;
+	 /* 이미 wait 했으면 -1 반환 */
+	if (child->waited) {
+		return -1;
+	}
+	
+	/* 같은 pid에 대해 wait를 두 번 성공하지 못하도록 표시 */
+	child->waited = true;
+
+	/* 자식이 아직 종료되지 않았으면 부모가 잠듦 */
+	if(!child->exited) {
+		sema_down(&child->wait_sema);
+	}
+
+	/* 자식 종료 후 남긴 상태값 저장 */
+	int status = child->exit_status;
+
+	/* children list에서 제거하고, 메모리 해제 */
+	list_remove (&child->elem);
+	free(child);
+	
+	return status;
 }
 
+/* 자식 찾기 */
+static struct child_info *find_child (tid_t child_tid){
+	struct thread *curr = thread_current();
+	struct list_elem *e;
+
+	/* curr->children [ child_info(pid=3).elem ] -> [ child_info(pid=7).elem ] */
+	for (e = list_begin (&curr->children);
+		e != list_end (&curr->children);
+		e = list_next(e)) {
+		struct child_info *child = list_entry (e, struct child_info, elem);
+
+		if(child->pid == child_tid){
+			return child;
+			}
+		}
+	return NULL;
+}
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
@@ -383,6 +435,16 @@ process_exit (void) {
 		initd_exit_status = curr->exit_status;
 		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
 		sema_up(&initd_sema);
+	}
+
+	/* 종료 중인 자식이면 부모가 wait()에서 읽을 종료 정보를 남긴다. */
+	if (curr->child_info != NULL) {
+		/* thread status에 존재하는 상태를 exit_status를 info에 복사 */
+		curr->child_info->exit_status = curr->exit_status;
+		/* 종료 여부를 true로 변경 */
+		curr->child_info->exited = true;
+		/* 기다리고 있던 부모를 깨움 */
+		sema_up (&curr->child_info->wait_sema);
 	}
 
 	process_cleanup ();
