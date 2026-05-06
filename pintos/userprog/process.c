@@ -460,23 +460,21 @@ static struct child_info *find_child (tid_t child_tid){
 void
 process_exit (void) {
 	struct thread *curr = thread_current();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here.  */
-	if (curr->pml4 != NULL){
-		initd_exit_status = curr->exit_status;
-		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
 
-		/* initd_sema는 Pintos kernel main이 최초 유저 프로그램 종료를 기다릴 때만 쓴다.
-		   fork로 생긴 일반 자식 종료까지 여기서 깨우면 부모가 이어서 실행되기 전에 Pintos가 끝나버린다. */
-		if (curr->tid == initd_tid)
-			sema_up(&initd_sema);
+	/* 유저 프로세스 종료 메시지 출력 */
+	if (curr->pml4 != NULL) {
+		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
+	}
+
+	/* initd_sema는 Pintos kernel main이 최초 유저 프로그램 종료를 기다릴 때만 쓴다. */
+	if (curr->tid == initd_tid) {
+		initd_exit_status = curr->exit_status;
+		sema_up(&initd_sema);
 	}
 
 	/* 종료 중인 자식이면 부모가 wait()에서 읽을 종료 정보를 남긴다. */
 	if (curr->child_info != NULL) {
-		/* thread status에 존재하는 상태를 exit_status를 info에 복사 */
+		/* 현재 thread의 종료 상태를 부모가 읽을 child_info에 복사 */
 		curr->child_info->exit_status = curr->exit_status;
 		/* 종료 여부를 true로 변경 */
 		curr->child_info->exited = true;
