@@ -17,6 +17,7 @@
 #include "devices/input.h"
 
 static void is_crazy_user_buffer(const void *buffer, size_t size);
+static void is_crazy_user_string(const char *str);
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -144,6 +145,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	switch (f->R.rax){
 		case SYS_OPEN: {
 			const char *name = (const char *) arg0;
+			is_crazy_user_string(name);
+
 			struct file *opened = filesys_open (name);
 			f->R.rax = fd_allocate (opened);
 			if (f->R.rax == -1 && opened != NULL)
@@ -151,6 +154,16 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		}
 		
+		case SYS_CREATE:{
+			const char *name = (const char *)arg0;
+			const unsigned initial_size = (unsigned)arg1;
+
+			is_crazy_user_string(name);
+			
+			f->R.rax = filesys_create (name, initial_size);
+			break;
+		}
+
 		case SYS_READ: {
 			int fd = (int) arg0;
 			void *buffer = (void *) arg1;
@@ -187,19 +200,49 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		}
 
+		case SYS_FILESIZE:{
+			const int fd = (int)arg0;
+			struct file *file = fd_table_get_file(fd);
+
+			if (file == NULL){
+				f->R.rax = -1;
+			} else {
+				f->R.rax = file_length(file);
+			}
+			break;
+		}
+
 		case SYS_CLOSE:
 			fd_close ((int) arg0);
 			break;
 
-		case SYS_WRITE:
-			if ((arg0 == STDOUT_FILENO)){
-				is_crazy_user_buffer((const void *) arg1, (size_t) arg2);
-				putbuf((char *) arg1, (size_t) arg2);
-				f->R.rax = arg2;
-			}else{
+		case SYS_WRITE:{
+			const int fd = (int)arg0;
+			const void *buffer = (const void *)arg1;
+			const size_t size = (size_t)arg2;
+			
+			if (size == 0){
+				f->R.rax = 0;
+				break;
+			}
+
+			is_crazy_user_buffer(buffer, size);
+
+			if (fd == STDOUT_FILENO){
+				putbuf(buffer, size);
+				f->R.rax = size;
+			} else if (fd >= 2) {
+				struct file *write_file = fd_table_get_file (fd);
+				if (write_file == NULL){
+					f->R.rax = -1;
+				} else {
+					f->R.rax = file_write(write_file, buffer, size);
+				}
+			} else {
 				f->R.rax = -1;
 			}
 			break;
+		}
 
 		case SYS_FORK:
 			f->R.rax = process_fork ((const char *) arg0, f);
@@ -233,8 +276,7 @@ static void
 is_crazy_user_address (const void *u_addr) {
 	if (u_addr == NULL || !is_user_vaddr (u_addr) ||
 		pml4_get_page (thread_current ()->pml4, u_addr) == NULL) {
-		thread_current ()->exit_status = -1;
-		thread_exit ();
+		curtain_call (-1);
 	}
 }
 
@@ -248,3 +290,12 @@ is_crazy_user_buffer (const void *buffer, size_t size) {
 		is_crazy_user_address (start + i);
 }
 
+static void
+is_crazy_user_string (const char *str){
+	is_crazy_user_address(str);
+
+	while(*str != '\0'){
+		str++;
+		is_crazy_user_address(str);
+	}
+}
