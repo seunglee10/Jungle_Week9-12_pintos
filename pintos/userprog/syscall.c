@@ -209,10 +209,15 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = process_wait ((tid_t) arg0);
 			break;
 
+		case SYS_EXEC:
+			/* exec 실패 시 현재 프로세스를 exit(-1)로 종료한다. */
+			if (process_exec ((void *) arg0) < 0){
+				curtain_call(-1);
+			}
+			break;
+
 		case SYS_EXIT:
 			curtain_call ((int) arg0);
-			// thread_current()->exit_status = (int)f->R.rdi;
-			// thread_exit();
 			break;
 
 		default:
