@@ -15,10 +15,11 @@
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
 #include "devices/input.h"
+#include "threads/palloc.h"
 
 static void is_crazy_user_buffer(const void *buffer, size_t size);
 static void is_crazy_user_string(const char *str);
-
+static char *copy_user_string (const char *u_str);
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
@@ -252,11 +253,15 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = process_wait ((tid_t) arg0);
 			break;
 
-		case SYS_EXEC:
-			is_crazy_user_string ((const char *) arg0);
-			if (process_exec ((void *) arg0) < 0)
+		case SYS_EXEC: {
+			char *cmd_line = copy_user_string ((const char *) arg0);
+
+			if (process_exec (cmd_line) < 0)
 				curtain_call (-1);
-			break;
+
+			NOT_REACHED ();
+		}
+
 
 		case SYS_EXIT:
 			curtain_call ((int) arg0);
@@ -304,4 +309,29 @@ is_crazy_user_string (const char *str){
 		str++;
 		is_crazy_user_address(str);
 	}
+}
+
+static char *
+copy_user_string (const char *user_str) {
+	/* exec 과정에서 기존 유저 주소 공간이 정리될 수 있으므로,
+	 * 유저 문자열을 커널 페이지에 먼저 복사 */
+	char *kernel_str = palloc_get_page (0);
+	if (kernel_str == NULL)
+		curtain_call (-1);
+
+	for (size_t i = 0; i < PGSIZE; i++) {
+		/* 문자열 중간에 잘못된 유저 주소가 섞여 있으면 프로세스를 종료 */
+		is_crazy_user_address (user_str + i);
+
+		kernel_str[i] = user_str[i];
+
+		/* 널 문자를 만나면 문자열 복사가 끝난 것이다. */
+		if (kernel_str[i] == '\0')
+			return kernel_str;
+	}
+
+	/* 한 페이지 안에서 문자열이 끝나지 않으면 비정상 인자로 보고 종료 */
+	palloc_free_page (kernel_str);
+	curtain_call (-1);
+	NOT_REACHED ();
 }
