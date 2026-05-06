@@ -257,8 +257,7 @@ __do_fork (void *aux) {
 	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.
-	 * 해당 투두 아래에 작성함 */
+	 * TODO:       the resources of parent.*/
 	/* fork()는 부모 프로세스의 열린 파일 목록도 자식에게 복사해야 한다.
 	   부모와 자식이 같은 fd 번호를 쓸 수 있어야 fork-close 같은 테스트가 성립한다. */
 	current->fd_table_size = parent->fd_table_size;
@@ -378,7 +377,7 @@ process_exit (void) {
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here.  */
+	 * TODO: We recommend you to implement process resource cleanup here. */
 	if (curr->pml4 != NULL){
 		initd_exit_status = curr->exit_status;
 		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
