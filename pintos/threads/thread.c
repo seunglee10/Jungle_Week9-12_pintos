@@ -480,12 +480,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 #ifdef USERPROG
 	t->pml4 = NULL;
 	t->exit_status = -1;
-<<<<<<< HEAD
 	t->fd_table = NULL;
 	t->fd_table_size = 0;
 	t->fd_next = 2;
-=======
->>>>>>> 9a508d6 (feat: child_info 구조체 생성)
 	list_init (&t->children);
 	t->child_info = NULL;
 #endif
