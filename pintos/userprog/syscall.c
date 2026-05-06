@@ -14,6 +14,8 @@
 
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
+#include "devices/input.h"
+
 static void is_crazy_user_buffer(const void *buffer, size_t size);
 
 void syscall_entry (void);
@@ -135,41 +137,80 @@ fd_close (int fd) {
 /* The main system call interface */
 void
 syscall_handler (struct intr_frame *f UNUSED) {
+	uint64_t arg0 = f->R.rdi;
+	uint64_t arg1 = f->R.rsi;
+	uint64_t arg2 = f->R.rdx;
 	// TODO: Your implementation goes here.
 	switch (f->R.rax){
 		case SYS_OPEN: {
-			const char *name = (const char *) f->R.rdi;
+			const char *name = (const char *) arg0;
 			struct file *opened = filesys_open (name);
 			f->R.rax = fd_allocate (opened);
 			if (f->R.rax == -1 && opened != NULL)
 				file_close (opened);
 			break;
 		}
+		
+		case SYS_READ: {
+			int fd = (int) arg0;
+			void *buffer = (void *) arg1;
+			unsigned size = (unsigned) arg2;
+			/* 0바이트 읽기는 아무것도 하지 않고 0 반환 */
+			if (size == 0) {
+				f->R.rax = 0;
+				break;
+			}
+
+			/* fd == 0 일 때 (stdin) 키보드 입력 읽기 */
+			if (fd == 0) {
+				is_crazy_user_buffer(buffer, size);
+				uint8_t *buf = (uint8_t *) buffer;
+				for (unsigned i = 0; i < size; i++)
+					buf[i] = input_getc();
+				f->R.rax = size;
+			/* fd ==1 일 때 (stdout) 지금 읽기니까 이땐 무조건 -1 반환 */
+			} else if (fd == 1) {
+				f->R.rax = -1;
+			/* fd >=2 일 때 open()으로 연 일반 파일이라고 보고 처리 */
+			} else if (fd >= 2) {
+				struct file *read_file = fd_table_get_file(fd);
+				if (read_file == NULL) {
+					f->R.rax = -1;
+				} else {
+					is_crazy_user_buffer(buffer, size);
+					f->R.rax = file_read(read_file, buffer, size);
+				}
+
+			} else {
+				f->R.rax = -1;
+			}
+			break;
+		}
 
 		case SYS_CLOSE:
-			fd_close ((int) f->R.rdi);
+			fd_close ((int) arg0);
 			break;
 
 		case SYS_WRITE:
-			if ((f->R.rdi == STDOUT_FILENO)){
-				is_crazy_user_buffer((const void *)f->R.rsi, (size_t)f->R.rdx);
-				putbuf((char *)f->R.rsi, (size_t)f->R.rdx);
-				f->R.rax = f->R.rdx;
+			if ((arg0 == STDOUT_FILENO)){
+				is_crazy_user_buffer((const void *) arg1, (size_t) arg2);
+				putbuf((char *) arg1, (size_t) arg2);
+				f->R.rax = arg2;
 			}else{
 				f->R.rax = -1;
 			}
 			break;
 
 		case SYS_FORK:
-			f->R.rax = process_fork ((const char *) f->R.rdi, f);
+			f->R.rax = process_fork ((const char *) arg0, f);
 			break;
 
 		case SYS_WAIT:
-			f->R.rax = process_wait ((tid_t) f->R.rdi);
+			f->R.rax = process_wait ((tid_t) arg0);
 			break;
 
 		case SYS_EXIT:
-			curtain_call ((int) f->R.rdi);
+			curtain_call ((int) arg0);
 			// thread_current()->exit_status = (int)f->R.rdi;
 			// thread_exit();
 			break;
@@ -178,8 +219,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			printf ("system call!\n");
 			thread_exit ();
 			break;
+		}
 	} 
-}
 
 void
 curtain_call (int status) {
